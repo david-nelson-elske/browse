@@ -1,3 +1,4 @@
+use crate::ansi::parse_ansi_line;
 use crate::app::App;
 use crate::preview::PreviewContent;
 use ratatui::layout::{Constraint, Direction, Layout};
@@ -129,11 +130,11 @@ fn draw_preview(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let scroll = app.preview_scroll.min(all_lines.len().saturating_sub(1));
     let visible_lines = &all_lines[scroll..];
 
-    // Build Line objects, preserving ANSI sequences via raw spans
+    // Parse ANSI escape sequences into styled ratatui spans
     let lines: Vec<Line> = visible_lines
         .iter()
         .take(inner.height as usize)
-        .map(|l| Line::from(Span::raw((*l).to_string())))
+        .map(|l| parse_ansi_line(l))
         .collect();
 
     let paragraph = Paragraph::new(lines);
