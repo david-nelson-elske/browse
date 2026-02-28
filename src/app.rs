@@ -189,8 +189,14 @@ impl App {
                     use std::io::Write;
                     let _ = stdin.write_all(path.as_bytes());
                 }
-                let _ = child.wait();
-                return;
+                // Drop stdin so the process gets EOF
+                drop(child.stdin.take());
+                if let Ok(status) = child.wait() {
+                    if status.success() {
+                        return;
+                    }
+                }
+                // Process failed — try next clipboard command
             }
         }
     }
