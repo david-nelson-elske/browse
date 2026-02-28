@@ -96,6 +96,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "browse"
+version = "0.1.0"
+dependencies = [
+ "crossterm",
+ "dirs",
+ "ratatui",
+ "syntect",
+ "termimad",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -467,17 +478,6 @@ checksum = "b95f7c0680e4142284cf8b22c14a476e87d61b004a3a0861872b32ef7ead40a2"
 dependencies = [
  "bit-set",
  "regex",
-]
-
-[[package]]
-name = "filebrowser-rs"
-version = "0.1.0"
-dependencies = [
- "crossterm",
- "dirs",
- "ratatui",
- "syntect",
- "termimad",
 ]
 
 [[package]]

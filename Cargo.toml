@@ -1,7 +1,16 @@
 [package]
-name = "filebrowser-rs"
+name = "browse"
 version = "0.1.0"
 edition = "2024"
+description = "A fast terminal file browser with tree navigation and syntax-highlighted preview"
+license = "MIT"
+repository = "https://github.com/davidjamesmoss/browse"
+keywords = ["terminal", "file-browser", "tui", "tree", "preview"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "browse"
+path = "src/main.rs"
 
 [dependencies]
 crossterm = "0.29.0"
@@ -9,3 +18,8 @@ dirs = "6.0.0"
 ratatui = "0.30.0"
 syntect = "5.3.0"
 termimad = "0.34.1"
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1
