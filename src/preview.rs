@@ -97,7 +97,21 @@ impl Previewer {
             .find_syntax_for_file(file_path)
             .ok()
             .flatten()
-            .or_else(|| self.syntax_set.find_syntax_by_extension(&ext));
+            .or_else(|| self.syntax_set.find_syntax_by_extension(&ext))
+            .or_else(|| {
+                let fallback = match ext.as_str() {
+                    "ts" | "tsx" | "mts" | "cts" | "jsx" | "mjs" | "cjs" => Some("js"),
+                    "zsh" | "fish" => Some("sh"),
+                    "yml" => Some("yaml"),
+                    "h" | "hpp" => Some("cpp"),
+                    "kt" => Some("java"),
+                    "scss" | "less" => Some("css"),
+                    "toml" => Some("ini"),   // close enough
+                    "dockerfile" => Some("sh"),
+                    _ => None,
+                };
+                fallback.and_then(|f| self.syntax_set.find_syntax_by_extension(f))
+            });
 
         if let Some(syntax) = syntax {
             let theme = &self.theme_set.themes["base16-ocean.dark"];
@@ -144,6 +158,16 @@ impl Previewer {
                     self.syntax_set
                         .find_syntax_by_token(lang)
                         .or_else(|| self.syntax_set.find_syntax_by_extension(lang))
+                        .or_else(|| {
+                            let fallback = match lang {
+                                "ts" | "typescript" | "tsx" | "jsx" | "mjs" | "cjs" => Some("js"),
+                                "zsh" | "fish" => Some("sh"),
+                                "yml" => Some("yaml"),
+                                "dockerfile" => Some("sh"),
+                                _ => None,
+                            };
+                            fallback.and_then(|f| self.syntax_set.find_syntax_by_extension(f))
+                        })
                 } else {
                     None
                 };
