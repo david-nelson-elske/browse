@@ -17,7 +17,6 @@ const MAGENTA: &str = "\x1b[35m";
 const BLUE: &str = "\x1b[34m";
 
 const MAX_PREVIEW_BYTES: u64 = 512 * 1024; // 512 KB
-const MAX_PREVIEW_LINES: usize = 1000;
 
 pub enum PreviewContent {
     Text(String),
@@ -79,13 +78,7 @@ impl Previewer {
             Err(e) => return (PreviewContent::Error(format!("Error: {}", e)), 1),
         };
 
-        let lines: Vec<&str> = content.lines().collect();
-        let total_lines = lines.len();
-        let truncated: String = if lines.len() > MAX_PREVIEW_LINES {
-            lines[..MAX_PREVIEW_LINES].join("\n")
-        } else {
-            content.clone()
-        };
+        let total_lines = content.lines().count();
 
         // Check if it's markdown
         let ext = file_path
@@ -94,7 +87,7 @@ impl Previewer {
             .unwrap_or_default();
 
         if ext == "md" || ext == "mdx" {
-            let rendered = self.render_markdown(&truncated);
+            let rendered = self.render_markdown(&content);
             return (PreviewContent::Text(rendered), total_lines);
         }
 
@@ -111,7 +104,7 @@ impl Previewer {
             let mut highlighter = HighlightLines::new(syntax, theme);
             let mut highlighted = String::new();
 
-            for line in LinesWithEndings::from(&truncated) {
+            for line in LinesWithEndings::from(&content) {
                 if let Ok(ranges) = highlighter.highlight_line(line, &self.syntax_set) {
                     let escaped = as_24_bit_terminal_escaped(&ranges, false);
                     highlighted.push_str(&escaped);
@@ -121,7 +114,7 @@ impl Previewer {
             return (PreviewContent::Text(highlighted), total_lines);
         }
 
-        (PreviewContent::Text(truncated), total_lines)
+        (PreviewContent::Text(content), total_lines)
     }
 
     /// Render markdown with syntax-highlighted code blocks
