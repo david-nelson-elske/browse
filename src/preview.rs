@@ -5,6 +5,17 @@ use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
 use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
 
+// ANSI escape helpers
+const RESET: &str = "\x1b[0m";
+const BOLD: &str = "\x1b[1m";
+const DIM: &str = "\x1b[2m";
+const ITALIC: &str = "\x1b[3m";
+const CYAN: &str = "\x1b[36m";
+const YELLOW: &str = "\x1b[33m";
+const GREEN: &str = "\x1b[32m";
+const MAGENTA: &str = "\x1b[35m";
+const BLUE: &str = "\x1b[34m";
+
 const MAX_PREVIEW_BYTES: u64 = 512 * 1024; // 512 KB
 const MAX_PREVIEW_LINES: usize = 1000;
 
@@ -83,8 +94,8 @@ impl Previewer {
             .unwrap_or_default();
 
         if ext == "md" || ext == "mdx" {
-            let rendered = termimad::text(&truncated);
-            return (PreviewContent::Text(rendered.to_string()), total_lines);
+            let rendered = self.render_markdown(&truncated);
+            return (PreviewContent::Text(rendered), total_lines);
         }
 
         // Try syntax highlighting
@@ -111,6 +122,128 @@ impl Previewer {
         }
 
         (PreviewContent::Text(truncated), total_lines)
+    }
+
+    /// Render markdown with syntax-highlighted code blocks
+    fn render_markdown(&self, input: &str) -> String {
+        let mut output = String::new();
+        let mut lines = input.lines().peekable();
+        let theme = &self.theme_set.themes["base16-ocean.dark"];
+
+        while let Some(line) = lines.next() {
+            // Fenced code block
+            if line.starts_with("```") {
+                let lang = line.trim_start_matches('`').trim();
+                let mut code_lines: Vec<String> = Vec::new();
+
+                // Collect lines until closing fence
+                while let Some(code_line) = lines.next() {
+                    if code_line.starts_with("```") {
+                        break;
+                    }
+                    code_lines.push(code_line.to_string());
+                }
+
+                let code = code_lines.join("\n");
+
+                // Try syntax highlighting
+                let syntax = if !lang.is_empty() {
+                    self.syntax_set
+                        .find_syntax_by_token(lang)
+                        .or_else(|| self.syntax_set.find_syntax_by_extension(lang))
+                } else {
+                    None
+                };
+
+                if let Some(syntax) = syntax {
+                    let mut highlighter = HighlightLines::new(syntax, theme);
+                    let code_with_newlines = code + "\n";
+                    for code_line in LinesWithEndings::from(&code_with_newlines) {
+                        if let Ok(ranges) =
+                            highlighter.highlight_line(code_line, &self.syntax_set)
+                        {
+                            let escaped = as_24_bit_terminal_escaped(&ranges, false);
+                            output.push_str(&format!("  {}", escaped));
+                        }
+                    }
+                    output.push_str(RESET);
+                } else {
+                    // No syntax found — render as dimmed code
+                    for code_line in &code_lines {
+                        output.push_str(&format!("  {DIM}{}{RESET}\n", code_line));
+                    }
+                }
+                output.push('\n');
+                continue;
+            }
+
+            // Headings
+            if line.starts_with("# ") {
+                output.push_str(&format!(
+                    "{BOLD}{CYAN}{}{RESET}\n",
+                    &line[2..]
+                ));
+                continue;
+            }
+            if line.starts_with("## ") {
+                output.push_str(&format!(
+                    "{BOLD}{GREEN}{}{RESET}\n",
+                    &line[3..]
+                ));
+                continue;
+            }
+            if line.starts_with("### ") {
+                output.push_str(&format!(
+                    "{BOLD}{YELLOW}{}{RESET}\n",
+                    &line[4..]
+                ));
+                continue;
+            }
+            if line.starts_with("#### ") || line.starts_with("##### ") || line.starts_with("###### ") {
+                let text = line.trim_start_matches('#').trim_start();
+                output.push_str(&format!("{BOLD}{MAGENTA}{text}{RESET}\n"));
+                continue;
+            }
+
+            // Horizontal rule
+            if (line.starts_with("---") || line.starts_with("***") || line.starts_with("___"))
+                && line.chars().all(|c| c == '-' || c == '*' || c == '_' || c == ' ')
+                && line.len() >= 3
+            {
+                output.push_str(&format!("{DIM}────────────────────────────────{RESET}\n"));
+                continue;
+            }
+
+            // Bullet lists
+            if line.starts_with("- ") || line.starts_with("* ") {
+                let text = &line[2..];
+                let rendered = render_inline(text);
+                output.push_str(&format!("  {BLUE}•{RESET} {rendered}\n"));
+                continue;
+            }
+
+            // Numbered lists
+            if let Some(rest) = strip_numbered_prefix(line) {
+                let rendered = render_inline(rest);
+                output.push_str(&format!("  {rendered}\n"));
+                continue;
+            }
+
+            // Blockquotes
+            if line.starts_with("> ") {
+                let text = &line[2..];
+                let rendered = render_inline(text);
+                output.push_str(&format!("  {DIM}│{RESET} {rendered}\n"));
+                continue;
+            }
+
+            // Regular text with inline formatting
+            let rendered = render_inline(line);
+            output.push_str(&rendered);
+            output.push('\n');
+        }
+
+        output
     }
 
     fn preview_directory(&self, dir_path: &Path) -> (PreviewContent, usize) {
@@ -152,6 +285,98 @@ impl Previewer {
         }
         parts.join(" | ")
     }
+}
+
+/// Render inline markdown formatting: **bold**, *italic*, `code`, [links](url)
+fn render_inline(text: &str) -> String {
+    let mut result = String::new();
+    let chars: Vec<char> = text.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+
+    while i < len {
+        // Inline code: `text`
+        if chars[i] == '`' {
+            if let Some(end) = find_closing(&chars, i + 1, '`') {
+                let code_text: String = chars[i + 1..end].iter().collect();
+                result.push_str(&format!("{DIM}{CYAN}{code_text}{RESET}"));
+                i = end + 1;
+                continue;
+            }
+        }
+
+        // Bold: **text**
+        if i + 1 < len && chars[i] == '*' && chars[i + 1] == '*' {
+            if let Some(end) = find_double_closing(&chars, i + 2, '*') {
+                let inner: String = chars[i + 2..end].iter().collect();
+                result.push_str(&format!("{BOLD}{inner}{RESET}"));
+                i = end + 2;
+                continue;
+            }
+        }
+
+        // Italic: *text*
+        if chars[i] == '*' && (i + 1 < len && chars[i + 1] != '*') {
+            if let Some(end) = find_closing(&chars, i + 1, '*') {
+                let inner: String = chars[i + 1..end].iter().collect();
+                result.push_str(&format!("{ITALIC}{inner}{RESET}"));
+                i = end + 1;
+                continue;
+            }
+        }
+
+        // Link: [text](url) — show text in blue
+        if chars[i] == '[' {
+            if let Some(bracket_end) = find_closing(&chars, i + 1, ']') {
+                if bracket_end + 1 < len && chars[bracket_end + 1] == '(' {
+                    if let Some(paren_end) = find_closing(&chars, bracket_end + 2, ')') {
+                        let link_text: String = chars[i + 1..bracket_end].iter().collect();
+                        result.push_str(&format!("{BLUE}{link_text}{RESET}"));
+                        i = paren_end + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        result.push(chars[i]);
+        i += 1;
+    }
+
+    result
+}
+
+fn find_closing(chars: &[char], start: usize, target: char) -> Option<usize> {
+    for i in start..chars.len() {
+        if chars[i] == target {
+            return Some(i);
+        }
+    }
+    None
+}
+
+fn find_double_closing(chars: &[char], start: usize, target: char) -> Option<usize> {
+    for i in start..chars.len().saturating_sub(1) {
+        if chars[i] == target && chars[i + 1] == target {
+            return Some(i);
+        }
+    }
+    None
+}
+
+fn strip_numbered_prefix(line: &str) -> Option<&str> {
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i > 0 && i < bytes.len() && (bytes[i] == b'.' || bytes[i] == b')') {
+        let rest = &line[i + 1..];
+        if rest.starts_with(' ') {
+            return Some(rest.trim_start());
+        }
+    }
+    None
 }
 
 fn is_likely_binary(file_path: &Path) -> bool {
