@@ -81,6 +81,9 @@ fn main() -> io::Result<()> {
                 (KeyCode::Char('.'), _) => {
                     app.toggle_hidden();
                 }
+                (KeyCode::Char('r'), _) => {
+                    app.refresh();
+                }
                 (KeyCode::Char('J'), _) => {
                     app.scroll_preview_down(1);
                 }

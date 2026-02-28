@@ -128,10 +128,8 @@ fn flatten_recursive(
         });
 
         if is_expanded {
-            // Need to load children if not yet loaded
-            if nodes[i].children.is_none() {
-                load_children(&mut nodes[i]);
-            }
+            // Always reload children from disk to reflect filesystem changes
+            load_children(&mut nodes[i]);
             if let Some(ref mut children) = nodes[i].children {
                 flatten_recursive(children, expanded, show_hidden, depth + 1, idx_path, rows);
             }

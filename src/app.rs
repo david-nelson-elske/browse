@@ -54,8 +54,9 @@ impl App {
         }
     }
 
-    /// Rebuild visible_rows from tree + expanded state, then update preview
+    /// Rebuild tree from disk and flatten, then update preview
     pub fn refresh(&mut self) {
+        self.tree = tree::build_tree(&self.root_path);
         self.visible_rows =
             tree::flatten_tree(&mut self.tree, &self.expanded, self.show_hidden);
 
