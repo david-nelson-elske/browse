@@ -98,7 +98,7 @@ fn draw_tree(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
 
     // Status bar
     let status = format!(
-        " {} items | j/k:nav l:expand h:collapse r:refresh q:quit",
+        " {} items | j/k:nav l:expand h:collapse y:copy r:refresh q:quit",
         rows.len()
     );
     lines.push(Line::from(Span::styled(

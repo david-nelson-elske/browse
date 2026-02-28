@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
 
 use crate::preview::{PreviewContent, Previewer};
 use crate::tree::{self, TreeNode, VisibleRow};
@@ -161,6 +162,37 @@ impl App {
         self.selected_index = 0;
         self.preview_scroll = 0;
         self.refresh();
+    }
+
+    pub fn yank_path(&self) {
+        let path = match self.visible_rows.get(self.selected_index) {
+            Some(r) => r.path.to_string_lossy().to_string(),
+            None => return,
+        };
+
+        // Try wl-copy (Wayland), then xclip (X11), then pbcopy (macOS)
+        let clipboard_cmds: &[(&str, &[&str])] = &[
+            ("wl-copy", &[]),
+            ("xclip", &["-selection", "clipboard"]),
+            ("pbcopy", &[]),
+        ];
+
+        for (cmd, args) in clipboard_cmds {
+            if let Ok(mut child) = Command::new(cmd)
+                .args(*args)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+            {
+                if let Some(ref mut stdin) = child.stdin {
+                    use std::io::Write;
+                    let _ = stdin.write_all(path.as_bytes());
+                }
+                let _ = child.wait();
+                return;
+            }
+        }
     }
 
     pub fn scroll_preview_down(&mut self, amount: usize) {

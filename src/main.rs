@@ -84,6 +84,9 @@ fn main() -> io::Result<()> {
                 (KeyCode::Char('r'), _) => {
                     app.refresh();
                 }
+                (KeyCode::Char('y'), _) => {
+                    app.yank_path();
+                }
                 (KeyCode::Char('J'), _) => {
                     app.scroll_preview_down(1);
                 }
