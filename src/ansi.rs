@@ -6,6 +6,8 @@ pub fn parse_ansi_line(input: &str) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut current_style = Style::default();
     let mut buf = String::new();
+
+    // Work with bytes for ESC detection but use char boundaries for text
     let bytes = input.as_bytes();
     let len = bytes.len();
     let mut i = 0;
@@ -42,83 +44,16 @@ pub fn parse_ansi_line(input: &str) -> Line<'static> {
                 }
             }
 
-            // Apply SGR parameters
-            let mut pi = 0;
-            while pi < params.len() {
-                match params[pi] {
-                    0 => current_style = Style::default(),
-                    1 => current_style = current_style.add_modifier(Modifier::BOLD),
-                    2 => current_style = current_style.add_modifier(Modifier::DIM),
-                    3 => current_style = current_style.add_modifier(Modifier::ITALIC),
-                    4 => current_style = current_style.add_modifier(Modifier::UNDERLINED),
-                    7 => current_style = current_style.add_modifier(Modifier::REVERSED),
-                    9 => current_style = current_style.add_modifier(Modifier::CROSSED_OUT),
-                    22 => {
-                        current_style =
-                            current_style.remove_modifier(Modifier::BOLD | Modifier::DIM)
-                    }
-                    23 => current_style = current_style.remove_modifier(Modifier::ITALIC),
-                    24 => current_style = current_style.remove_modifier(Modifier::UNDERLINED),
-                    27 => current_style = current_style.remove_modifier(Modifier::REVERSED),
-                    // Basic foreground colors
-                    30..=37 => {
-                        current_style = current_style.fg(basic_color(params[pi] - 30));
-                    }
-                    // Basic background colors
-                    40..=47 => {
-                        current_style = current_style.bg(basic_color(params[pi] - 40));
-                    }
-                    // Bright foreground
-                    90..=97 => {
-                        current_style = current_style.fg(bright_color(params[pi] - 90));
-                    }
-                    // Bright background
-                    100..=107 => {
-                        current_style = current_style.bg(bright_color(params[pi] - 100));
-                    }
-                    // 256-color or 24-bit foreground
-                    38 => {
-                        if pi + 1 < params.len() {
-                            if params[pi + 1] == 5 && pi + 2 < params.len() {
-                                current_style =
-                                    current_style.fg(Color::Indexed(params[pi + 2] as u8));
-                                pi += 2;
-                            } else if params[pi + 1] == 2 && pi + 4 < params.len() {
-                                current_style = current_style.fg(Color::Rgb(
-                                    params[pi + 2] as u8,
-                                    params[pi + 3] as u8,
-                                    params[pi + 4] as u8,
-                                ));
-                                pi += 4;
-                            }
-                        }
-                    }
-                    // 256-color or 24-bit background
-                    48 => {
-                        if pi + 1 < params.len() {
-                            if params[pi + 1] == 5 && pi + 2 < params.len() {
-                                current_style =
-                                    current_style.bg(Color::Indexed(params[pi + 2] as u8));
-                                pi += 2;
-                            } else if params[pi + 1] == 2 && pi + 4 < params.len() {
-                                current_style = current_style.bg(Color::Rgb(
-                                    params[pi + 2] as u8,
-                                    params[pi + 3] as u8,
-                                    params[pi + 4] as u8,
-                                ));
-                                pi += 4;
-                            }
-                        }
-                    }
-                    39 => current_style = current_style.fg(Color::Reset),
-                    49 => current_style = current_style.bg(Color::Reset),
-                    _ => {}
-                }
-                pi += 1;
-            }
+            apply_sgr_params(&params, &mut current_style);
         } else {
-            buf.push(bytes[i] as char);
-            i += 1;
+            // Decode the UTF-8 character starting at byte position i
+            let ch = &input[i..];
+            if let Some(c) = ch.chars().next() {
+                buf.push(c);
+                i += c.len_utf8();
+            } else {
+                i += 1;
+            }
         }
     }
 
@@ -128,6 +63,63 @@ pub fn parse_ansi_line(input: &str) -> Line<'static> {
     }
 
     Line::from(spans)
+}
+
+fn apply_sgr_params(params: &[u16], style: &mut Style) {
+    let mut pi = 0;
+    while pi < params.len() {
+        match params[pi] {
+            0 => *style = Style::default(),
+            1 => *style = style.add_modifier(Modifier::BOLD),
+            2 => *style = style.add_modifier(Modifier::DIM),
+            3 => *style = style.add_modifier(Modifier::ITALIC),
+            4 => *style = style.add_modifier(Modifier::UNDERLINED),
+            7 => *style = style.add_modifier(Modifier::REVERSED),
+            9 => *style = style.add_modifier(Modifier::CROSSED_OUT),
+            22 => *style = style.remove_modifier(Modifier::BOLD | Modifier::DIM),
+            23 => *style = style.remove_modifier(Modifier::ITALIC),
+            24 => *style = style.remove_modifier(Modifier::UNDERLINED),
+            27 => *style = style.remove_modifier(Modifier::REVERSED),
+            30..=37 => *style = style.fg(basic_color(params[pi] - 30)),
+            40..=47 => *style = style.bg(basic_color(params[pi] - 40)),
+            90..=97 => *style = style.fg(bright_color(params[pi] - 90)),
+            100..=107 => *style = style.bg(bright_color(params[pi] - 100)),
+            38 => {
+                if pi + 1 < params.len() {
+                    if params[pi + 1] == 5 && pi + 2 < params.len() {
+                        *style = style.fg(Color::Indexed(params[pi + 2] as u8));
+                        pi += 2;
+                    } else if params[pi + 1] == 2 && pi + 4 < params.len() {
+                        *style = style.fg(Color::Rgb(
+                            params[pi + 2] as u8,
+                            params[pi + 3] as u8,
+                            params[pi + 4] as u8,
+                        ));
+                        pi += 4;
+                    }
+                }
+            }
+            48 => {
+                if pi + 1 < params.len() {
+                    if params[pi + 1] == 5 && pi + 2 < params.len() {
+                        *style = style.bg(Color::Indexed(params[pi + 2] as u8));
+                        pi += 2;
+                    } else if params[pi + 1] == 2 && pi + 4 < params.len() {
+                        *style = style.bg(Color::Rgb(
+                            params[pi + 2] as u8,
+                            params[pi + 3] as u8,
+                            params[pi + 4] as u8,
+                        ));
+                        pi += 4;
+                    }
+                }
+            }
+            39 => *style = style.fg(Color::Reset),
+            49 => *style = style.bg(Color::Reset),
+            _ => {}
+        }
+        pi += 1;
+    }
 }
 
 fn basic_color(n: u16) -> Color {

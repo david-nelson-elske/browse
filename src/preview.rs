@@ -214,18 +214,19 @@ impl Previewer {
                 continue;
             }
 
-            // Bullet lists
-            if line.starts_with("- ") || line.starts_with("* ") {
-                let text = &line[2..];
+            // Bullet lists (with optional leading whitespace for nesting)
+            if let Some((indent_level, text)) = strip_bullet_prefix(line) {
+                let indent = "  ".repeat(indent_level + 1);
                 let rendered = render_inline(text);
-                output.push_str(&format!("  {BLUE}•{RESET} {rendered}\n"));
+                output.push_str(&format!("{indent}{BLUE}•{RESET} {rendered}\n"));
                 continue;
             }
 
-            // Numbered lists
-            if let Some(rest) = strip_numbered_prefix(line) {
-                let rendered = render_inline(rest);
-                output.push_str(&format!("  {rendered}\n"));
+            // Numbered lists (with optional leading whitespace)
+            if let Some((indent_level, text)) = strip_numbered_prefix(line) {
+                let indent = "  ".repeat(indent_level + 1);
+                let rendered = render_inline(text);
+                output.push_str(&format!("{indent}{rendered}\n"));
                 continue;
             }
 
@@ -364,16 +365,34 @@ fn find_double_closing(chars: &[char], start: usize, target: char) -> Option<usi
     None
 }
 
-fn strip_numbered_prefix(line: &str) -> Option<&str> {
-    let bytes = line.as_bytes();
+/// Strip bullet prefix (- or *) with optional leading whitespace, returns (indent_level, text)
+fn strip_bullet_prefix(line: &str) -> Option<(usize, &str)> {
+    let trimmed = line.trim_start();
+    let leading_spaces = line.len() - trimmed.len();
+    let indent_level = leading_spaces / 2;
+
+    if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+        Some((indent_level, &trimmed[2..]))
+    } else {
+        None
+    }
+}
+
+/// Strip numbered prefix with optional leading whitespace, returns (indent_level, text)
+fn strip_numbered_prefix(line: &str) -> Option<(usize, &str)> {
+    let trimmed = line.trim_start();
+    let leading_spaces = line.len() - trimmed.len();
+    let indent_level = leading_spaces / 2;
+
+    let bytes = trimmed.as_bytes();
     let mut i = 0;
     while i < bytes.len() && bytes[i].is_ascii_digit() {
         i += 1;
     }
     if i > 0 && i < bytes.len() && (bytes[i] == b'.' || bytes[i] == b')') {
-        let rest = &line[i + 1..];
+        let rest = &trimmed[i + 1..];
         if rest.starts_with(' ') {
-            return Some(rest.trim_start());
+            return Some((indent_level, rest.trim_start()));
         }
     }
     None
