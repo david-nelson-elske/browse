@@ -33,10 +33,23 @@ pub struct Previewer {
 
 impl Previewer {
     pub fn new() -> Self {
+        let syntax_set = Self::build_syntax_set();
         Self {
-            syntax_set: SyntaxSet::load_defaults_newlines(),
+            syntax_set,
             theme_set: ThemeSet::load_defaults(),
         }
+    }
+
+    fn build_syntax_set() -> SyntaxSet {
+        let mut builder = SyntaxSet::load_defaults_newlines().into_builder();
+        // Load custom Svelte syntax definitions from the embedded syntaxes directory
+        let syntax_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("syntaxes");
+        if syntax_dir.is_dir() {
+            if let Err(e) = builder.add_from_folder(&syntax_dir, true) {
+                eprintln!("Warning: failed to load custom syntaxes from {}: {e}", syntax_dir.display());
+            }
+        }
+        builder.build()
     }
 
     pub fn preview(&self, file_path: &Path) -> (PreviewContent, usize) {
@@ -106,6 +119,7 @@ impl Previewer {
                     "h" | "hpp" => Some("cpp"),
                     "kt" => Some("java"),
                     "scss" | "less" => Some("css"),
+                    "svelte" => Some("html"),
                     "toml" => Some("ini"),   // close enough
                     "dockerfile" => Some("sh"),
                     _ => None,
@@ -163,6 +177,7 @@ impl Previewer {
                                 "ts" | "typescript" | "tsx" | "jsx" | "mjs" | "cjs" => Some("js"),
                                 "zsh" | "fish" => Some("sh"),
                                 "yml" => Some("yaml"),
+                                "svelte" => Some("html"),
                                 "dockerfile" => Some("sh"),
                                 _ => None,
                             };
@@ -429,6 +444,36 @@ fn is_likely_binary(file_path: &Path) -> bool {
             BINARY_EXTS.contains(&ext.as_str())
         })
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn svelte_syntax_loads_and_highlights() {
+        let previewer = Previewer::new();
+
+        // Verify the syntax is found by extension
+        let syntax = previewer.syntax_set.find_syntax_by_extension("svelte");
+        assert!(syntax.is_some(), "Svelte syntax should be found by extension");
+        assert_eq!(syntax.unwrap().name, "Svelte");
+
+        // Write a test file and preview it
+        let mut tmp = tempfile::NamedTempFile::with_suffix(".svelte").unwrap();
+        write!(tmp, "<script>\n  let x = 1;\n</script>\n<p>Hello</p>\n").unwrap();
+        let (content, lines) = previewer.preview(tmp.path());
+        match content {
+            PreviewContent::Text(text) => {
+                // Should contain ANSI escape codes (syntax highlighting)
+                assert!(text.contains("\x1b["), "Output should contain ANSI escapes (syntax highlighting)");
+                println!("{text}");
+            }
+            other => panic!("Expected Text, got {:?}", std::mem::discriminant(&other)),
+        }
+        assert!(lines > 0);
+    }
 }
 
 fn format_size(bytes: u64) -> String {

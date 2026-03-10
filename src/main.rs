@@ -56,6 +56,44 @@ fn main() -> io::Result<()> {
         }
 
         match event::read()? {
+            Event::Key(key) if app.select_mode => match (key.code, key.modifiers) {
+                // In select mode: quit, exit select mode, or scroll preview
+                (KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                    app.should_quit = true;
+                }
+                (KeyCode::Char('s'), _) | (KeyCode::Esc, _) => {
+                    app.select_mode = false;
+                    execute!(io::stdout(), EnableMouseCapture)?;
+                }
+                // Arrow keys / j/k scroll the preview (terminal sends these for scroll wheel)
+                (KeyCode::Char('j'), _) | (KeyCode::Down, _) => {
+                    app.scroll_preview_down(3);
+                }
+                (KeyCode::Char('k'), _) | (KeyCode::Up, _) => {
+                    app.scroll_preview_up(3);
+                }
+                (KeyCode::Char('J'), _) => {
+                    app.scroll_preview_down(1);
+                }
+                (KeyCode::Char('K'), _) => {
+                    app.scroll_preview_up(1);
+                }
+                (KeyCode::Char('d'), _) => {
+                    let half = (area_height / 2) as usize;
+                    app.scroll_preview_down(half);
+                }
+                (KeyCode::Char('u'), _) => {
+                    let half = (area_height / 2) as usize;
+                    app.scroll_preview_up(half);
+                }
+                (KeyCode::Char('g'), _) => {
+                    app.preview_scroll = 0;
+                }
+                (KeyCode::Char('G'), _) => {
+                    app.scroll_preview_down(usize::MAX / 2);
+                }
+                _ => {}
+            },
             Event::Key(key) => match (key.code, key.modifiers) {
                 (KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                     app.should_quit = true;
@@ -87,24 +125,63 @@ fn main() -> io::Result<()> {
                 (KeyCode::Char('y'), _) => {
                     app.yank_path();
                 }
+                (KeyCode::Char('Y'), _) => {
+                    app.yank_file();
+                }
+                (KeyCode::Char('n'), _) => {
+                    app.toggle_line_numbers();
+                }
+                (KeyCode::Char('s'), _) | (KeyCode::Esc, _) => {
+                    app.select_mode = true;
+                    execute!(io::stdout(), DisableMouseCapture)?;
+                }
+                (KeyCode::Char('D'), _) => {
+                    app.toggle_diff_mode();
+                }
                 (KeyCode::Char('J'), _) => {
-                    app.scroll_preview_down(1);
+                    if app.diff_mode {
+                        app.scroll_diff_down(1);
+                    } else {
+                        app.scroll_preview_down(1);
+                    }
                 }
                 (KeyCode::Char('K'), _) => {
-                    app.scroll_preview_up(1);
+                    if app.diff_mode {
+                        app.scroll_diff_up(1);
+                    } else {
+                        app.scroll_preview_up(1);
+                    }
                 }
                 (KeyCode::Char('d'), _) => {
                     let half = (area_height / 2) as usize;
-                    app.scroll_preview_down(half);
+                    if app.diff_mode {
+                        app.scroll_diff_down(half);
+                    } else {
+                        app.scroll_preview_down(half);
+                    }
                 }
                 (KeyCode::Char('u'), _) => {
                     let half = (area_height / 2) as usize;
-                    app.scroll_preview_up(half);
+                    if app.diff_mode {
+                        app.scroll_diff_up(half);
+                    } else {
+                        app.scroll_preview_up(half);
+                    }
                 }
                 _ => {}
             },
             Event::Mouse(mouse) => {
-                let tree_width = terminal.size()?.width * 35 / 100;
+                let total_width = terminal.size()?.width;
+                let tree_width = if app.diff_mode {
+                    total_width * 30 / 100
+                } else {
+                    total_width * 35 / 100
+                };
+                let preview_end = if app.diff_mode {
+                    tree_width + total_width * 35 / 100
+                } else {
+                    total_width
+                };
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) => {
                         if mouse.column < tree_width {
@@ -112,13 +189,25 @@ fn main() -> io::Result<()> {
                         }
                     }
                     MouseEventKind::ScrollUp => {
-                        if mouse.column >= tree_width {
+                        if mouse.column < tree_width {
+                            for _ in 0..3 {
+                                app.move_up();
+                            }
+                        } else if mouse.column < preview_end {
                             app.scroll_preview_up(3);
+                        } else {
+                            app.scroll_diff_up(3);
                         }
                     }
                     MouseEventKind::ScrollDown => {
-                        if mouse.column >= tree_width {
+                        if mouse.column < tree_width {
+                            for _ in 0..3 {
+                                app.move_down();
+                            }
+                        } else if mouse.column < preview_end {
                             app.scroll_preview_down(3);
+                        } else {
+                            app.scroll_diff_down(3);
                         }
                     }
                     _ => {}

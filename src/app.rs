@@ -1,9 +1,40 @@
 use std::collections::HashSet;
+use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use crate::preview::{PreviewContent, Previewer};
 use crate::tree::{self, TreeNode, VisibleRow};
+
+/// Write text to the system clipboard. Tries wl-copy, xclip, pbcopy in order.
+fn write_clipboard(text: &str) {
+    let clipboard_cmds: &[(&str, &[&str])] = &[
+        ("wl-copy", &[]),
+        ("xclip", &["-selection", "clipboard"]),
+        ("pbcopy", &[]),
+    ];
+
+    for (cmd, args) in clipboard_cmds {
+        if let Ok(mut child) = Command::new(cmd)
+            .args(*args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            if let Some(ref mut stdin) = child.stdin {
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            drop(child.stdin.take());
+            if let Ok(status) = child.wait() {
+                if status.success() {
+                    return;
+                }
+            }
+        }
+    }
+}
 
 pub struct App {
     pub root_path: PathBuf,
@@ -12,9 +43,14 @@ pub struct App {
     pub visible_rows: Vec<VisibleRow>,
     pub selected_index: usize,
     pub show_hidden: bool,
+    pub show_line_numbers: bool,
     pub preview_scroll: usize,
     pub preview_cache: (PreviewContent, usize),
     pub should_quit: bool,
+    pub select_mode: bool,
+    pub diff_mode: bool,
+    pub diff_scroll: usize,
+    pub diff_cache: String,
     previewer: Previewer,
     last_preview_path: Option<PathBuf>,
 }
@@ -32,9 +68,14 @@ impl App {
             visible_rows: Vec::new(),
             selected_index: 0,
             show_hidden: false,
+            show_line_numbers: true,
             preview_scroll: 0,
             preview_cache: (PreviewContent::Empty, 0),
             should_quit: false,
+            select_mode: false,
+            diff_mode: false,
+            diff_scroll: 0,
+            diff_cache: String::new(),
             previewer,
             last_preview_path: None,
         };
@@ -79,10 +120,14 @@ impl App {
 
         if current_path != self.last_preview_path {
             self.last_preview_path = current_path.clone();
+            self.diff_scroll = 0;
             if let Some(path) = current_path {
                 self.preview_cache = self.previewer.preview(&path);
             } else {
                 self.preview_cache = (PreviewContent::Empty, 0);
+            }
+            if self.diff_mode {
+                self.update_diff();
             }
         }
     }
@@ -164,40 +209,29 @@ impl App {
         self.refresh();
     }
 
+    pub fn toggle_line_numbers(&mut self) {
+        self.show_line_numbers = !self.show_line_numbers;
+    }
+
     pub fn yank_path(&self) {
         let path = match self.visible_rows.get(self.selected_index) {
             Some(r) => r.path.to_string_lossy().to_string(),
             None => return,
         };
+        write_clipboard(&path);
+    }
 
-        // Try wl-copy (Wayland), then xclip (X11), then pbcopy (macOS)
-        let clipboard_cmds: &[(&str, &[&str])] = &[
-            ("wl-copy", &[]),
-            ("xclip", &["-selection", "clipboard"]),
-            ("pbcopy", &[]),
-        ];
-
-        for (cmd, args) in clipboard_cmds {
-            if let Ok(mut child) = Command::new(cmd)
-                .args(*args)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-            {
-                if let Some(ref mut stdin) = child.stdin {
-                    use std::io::Write;
-                    let _ = stdin.write_all(path.as_bytes());
-                }
-                // Drop stdin so the process gets EOF
-                drop(child.stdin.take());
-                if let Ok(status) = child.wait() {
-                    if status.success() {
-                        return;
-                    }
-                }
-                // Process failed — try next clipboard command
-            }
+    /// Copy the raw file content of the selected file to clipboard
+    pub fn yank_file(&self) {
+        let path = match self.visible_rows.get(self.selected_index) {
+            Some(r) => &r.path,
+            None => return,
+        };
+        if path.is_dir() {
+            return;
+        }
+        if let Ok(content) = fs::read_to_string(path) {
+            write_clipboard(&content);
         }
     }
 
@@ -207,6 +241,60 @@ impl App {
 
     pub fn scroll_preview_up(&mut self, amount: usize) {
         self.preview_scroll = self.preview_scroll.saturating_sub(amount);
+    }
+
+    pub fn toggle_diff_mode(&mut self) {
+        self.diff_mode = !self.diff_mode;
+        self.diff_scroll = 0;
+        if self.diff_mode {
+            self.update_diff();
+        }
+    }
+
+    fn update_diff(&mut self) {
+        let path = match self.visible_rows.get(self.selected_index) {
+            Some(r) if !r.is_directory => r.path.clone(),
+            _ => {
+                self.diff_cache = String::new();
+                return;
+            }
+        };
+
+        let output = Command::new("git")
+            .args(["diff", "HEAD", "--"])
+            .arg(&path)
+            .current_dir(&self.root_path)
+            .output();
+
+        match output {
+            Ok(out) if out.status.success() => {
+                let diff = String::from_utf8_lossy(&out.stdout).to_string();
+                if diff.is_empty() {
+                    self.diff_cache = "(no changes)".to_string();
+                } else {
+                    self.diff_cache = diff;
+                }
+            }
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                if stderr.contains("not a git repository") {
+                    self.diff_cache = "(not a git repository)".to_string();
+                } else {
+                    self.diff_cache = "(no changes)".to_string();
+                }
+            }
+            Err(_) => {
+                self.diff_cache = "(git not available)".to_string();
+            }
+        }
+    }
+
+    pub fn scroll_diff_down(&mut self, amount: usize) {
+        self.diff_scroll += amount;
+    }
+
+    pub fn scroll_diff_up(&mut self, amount: usize) {
+        self.diff_scroll = self.diff_scroll.saturating_sub(amount);
     }
 
     pub fn click_tree(&mut self, y: u16, area_height: u16) {

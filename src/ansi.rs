@@ -122,6 +122,84 @@ fn apply_sgr_params(params: &[u16], style: &mut Style) {
     }
 }
 
+/// Wrap a string containing ANSI escape sequences at `max_width` visible columns.
+/// Returns multiple lines, preserving ANSI state across line breaks.
+pub fn wrap_ansi_line(input: &str, max_width: usize) -> Vec<String> {
+    if max_width == 0 {
+        return vec![input.to_string()];
+    }
+
+    let mut result: Vec<String> = Vec::new();
+    let mut current_line = String::new();
+    let mut visible_col: usize = 0;
+    // Track the current ANSI state so we can re-apply it on new lines
+    let mut active_escape = String::new();
+
+    let bytes = input.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+
+    while i < len {
+        if bytes[i] == 0x1b && i + 1 < len && bytes[i + 1] == b'[' {
+            // ANSI escape sequence — add to current line without counting width
+            let start = i;
+            i += 2; // skip ESC [
+            while i < len {
+                let b = bytes[i];
+                i += 1;
+                if b == b'm' {
+                    break;
+                }
+            }
+            let seq = &input[start..i];
+            current_line.push_str(seq);
+            active_escape.push_str(seq);
+        } else {
+            // Regular character
+            let ch = &input[i..];
+            if let Some(c) = ch.chars().next() {
+                let cw = unicode_display_width(c);
+                if visible_col + cw > max_width {
+                    // Line is full — push it and start a new one
+                    current_line.push_str("\x1b[0m"); // reset at end of line
+                    result.push(current_line);
+                    current_line = active_escape.clone(); // re-apply ANSI state
+                    visible_col = 0;
+                }
+                current_line.push(c);
+                visible_col += cw;
+                i += c.len_utf8();
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    result.push(current_line);
+    result
+}
+
+/// Approximate display width of a character (1 for most, 2 for wide CJK/emoji).
+fn unicode_display_width(c: char) -> usize {
+    // Full-width and wide characters
+    if ('\u{1100}'..='\u{115F}').contains(&c)      // Hangul Jamo
+        || ('\u{2E80}'..='\u{303E}').contains(&c)   // CJK Radicals
+        || ('\u{3040}'..='\u{33BF}').contains(&c)   // Japanese/CJK
+        || ('\u{3400}'..='\u{4DBF}').contains(&c)   // CJK Extension A
+        || ('\u{4E00}'..='\u{9FFF}').contains(&c)   // CJK Unified
+        || ('\u{F900}'..='\u{FAFF}').contains(&c)   // CJK Compat
+        || ('\u{FE30}'..='\u{FE6F}').contains(&c)   // CJK Compat Forms
+        || ('\u{FF01}'..='\u{FF60}').contains(&c)   // Fullwidth Forms
+        || ('\u{FFE0}'..='\u{FFE6}').contains(&c)   // Fullwidth Signs
+        || ('\u{20000}'..='\u{2FFFD}').contains(&c)  // CJK Extension B+
+        || ('\u{30000}'..='\u{3FFFD}').contains(&c)
+    {
+        2
+    } else {
+        1
+    }
+}
+
 fn basic_color(n: u16) -> Color {
     match n {
         0 => Color::Black,
